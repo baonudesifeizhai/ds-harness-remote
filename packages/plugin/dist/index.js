@@ -59551,6 +59551,7 @@ function projectCodexThread(value) {
     return void 0;
   const createdAt = normalizeTimestamp(value.createdAt);
   const updatedAt = normalizeTimestamp(value.updatedAt) || createdAt;
+  const model = projectCodexModel(value);
   return {
     id: `codex:${value.id}`,
     backend: "codex",
@@ -59559,12 +59560,34 @@ function projectCodexThread(value) {
     ...typeof value.name === "string" && value.name.length > 0 ? { title: value.name } : {},
     ...typeof value.preview === "string" && value.preview.length > 0 ? { preview: value.preview } : {},
     ...typeof value.cwd === "string" ? { cwd: value.cwd } : {},
+    ...model.model === void 0 ? {} : { model: model.model },
+    ...model.reasoningEffort === void 0 ? {} : { reasoningEffort: model.reasoningEffort },
     createdAt,
     updatedAt,
     status: projectThreadStatus(value.status),
     ...typeof value.archived === "boolean" ? { archived: value.archived } : {},
     ...typeof value.isPinned === "boolean" ? { pinned: value.isPinned } : {}
   };
+}
+function projectCodexModel(value) {
+  if (!isRecord(value))
+    return {};
+  const candidates = [];
+  if (Array.isArray(value.turns)) {
+    for (let index = value.turns.length - 1; index >= 0; index -= 1)
+      candidates.push(value.turns[index]);
+  }
+  candidates.push(value);
+  for (const candidate of candidates) {
+    if (!isRecord(candidate))
+      continue;
+    const model = typeof candidate.model === "string" && candidate.model.length > 0 ? candidate.model : typeof candidate.modelId === "string" && candidate.modelId.length > 0 ? candidate.modelId : void 0;
+    if (model === void 0)
+      continue;
+    const reasoningEffort = typeof candidate.reasoningEffort === "string" && candidate.reasoningEffort.length > 0 ? candidate.reasoningEffort : typeof candidate.effort === "string" && candidate.effort.length > 0 ? candidate.effort : void 0;
+    return { model, ...reasoningEffort === void 0 ? {} : { reasoningEffort } };
+  }
+  return {};
 }
 function deriveCodexCwdWorkspaces(values) {
   const byPath = /* @__PURE__ */ new Map();
@@ -72210,6 +72233,12 @@ function projectCodexNativeHistory(thread, sessionId, sessionGeneration = "legac
   let seq = 0;
   let turnNumber = 0;
   const active = activeTurnId(thread.turns);
+  const threadModel = projectCodexModel(thread);
+  const fallbackSelection = threadModel.model === void 0 ? modelSelection() : {
+    provider: "codex",
+    model: threadModel.model,
+    ...threadModel.reasoningEffort === void 0 ? {} : { reasoningEffort: threadModel.reasoningEffort }
+  };
   const append = (type, data2, time = Date.now(), view, sourceEventSeqs) => {
     const eventSeq = seq++;
     entries.push({
@@ -72242,12 +72271,18 @@ function projectCodexNativeHistory(thread, sessionId, sessionGeneration = "legac
     for (let itemIndex = 0; itemIndex < turnItems.length; itemIndex += 1) {
       const item = turnItems[itemIndex];
       let toolCallSeq;
+      const turnModel = projectCodexModel(turn);
+      const selection = turnModel.model === void 0 ? fallbackSelection : {
+        provider: "codex",
+        model: turnModel.model,
+        ...turnModel.reasoningEffort === void 0 ? {} : { reasoningEffort: turnModel.reasoningEffort }
+      };
       for (const event of itemEvents(
         item,
         turnNumber,
         1,
         void 0,
-        modelSelection(),
+        selection,
         sessionId,
         itemIndex === imageOwner ? toolImages : []
       )) {
@@ -72275,6 +72310,8 @@ function projectCodexNativeHistory(thread, sessionId, sessionGeneration = "legac
       id: sessionId,
       createdAt: projected?.createdAt ?? Date.now(),
       ...projected?.cwd === void 0 ? {} : { cwd: projected.cwd },
+      ...projected?.model === void 0 ? {} : { model: projected.model },
+      ...projected?.reasoningEffort === void 0 ? {} : { reasoningEffort: projected.reasoningEffort },
       ...sessionGeneration === "v3" ? { isSeeded: false } : {}
     },
     entries,
@@ -72346,6 +72383,12 @@ function itemEvents(item, turn, step, requestId, selection = modelSelection(), s
   const type = string2(item.type);
   const id6 = string2(item.id) ?? `${turn}:${step}:${hashString(JSON.stringify(item))}`;
   const text = itemText2(item);
+  const itemModel = projectCodexModel(item);
+  const effectiveSelection = itemModel.model === void 0 ? selection : {
+    provider: selection.provider,
+    model: itemModel.model,
+    ...itemModel.reasoningEffort === void 0 ? {} : { reasoningEffort: itemModel.reasoningEffort }
+  };
   if (type === "userMessage") return [{
     type: "user/message",
     data: {
@@ -72370,7 +72413,7 @@ function itemEvents(item, turn, step, requestId, selection = modelSelection(), s
           text,
           type === "agentMessage" ? supplementalImages : []
         ),
-        source: { kind: "model", provider: selection.provider, model: selection.model }
+        source: { kind: "model", provider: effectiveSelection.provider, model: effectiveSelection.model }
       }
     }
   }];
@@ -72395,7 +72438,7 @@ function itemEvents(item, turn, step, requestId, selection = modelSelection(), s
         id: id6,
         role: "assistant",
         content: [{ type: "text", text: text ?? "CodeX reported an error." }],
-        source: { kind: "model", provider: selection.provider, model: selection.model }
+        source: { kind: "model", provider: effectiveSelection.provider, model: effectiveSelection.model }
       }
     }
   }];
@@ -72679,6 +72722,7 @@ var CodexLiveProjection = class {
   async sessionFollow(request, signal) {
     const sessionId = sessionIdFromAddress2(record4(request.address));
     const threadId = nativeThreadId(sessionId);
+    await this.context.refreshAndPublishWorkspaces();
     const history = await this.context.readHistoryPage(threadId, {
       maxMessages: optionalPositiveInteger2(request.maxMessages)
     }, signal);
@@ -72765,6 +72809,21 @@ var CodexLiveProjection = class {
     }
     if (frame.method === "turn/started") {
       const turn = record4(params.turn);
+      const turnModel = projectCodexModel(turn);
+      if (turnModel.model !== void 0) {
+        const selected = {
+          provider: CODEX_PROVIDER,
+          model: turnModel.model,
+          ...turnModel.reasoningEffort === void 0 ? {} : { reasoningEffort: turnModel.reasoningEffort }
+        };
+        this.context.selectedModels.set(follow.sessionId, selected);
+        this.context.publishProjection(
+          follow.sessionId,
+          "modelSelection",
+          modelSelectionProjection(selected),
+          this.context.nextProjectionSeq()
+        );
+      }
       this.endAssistantAttempt(follow, { kind: "abandoned" });
       this.resetLiveTurn(follow);
       follow.turn += 1;
@@ -73454,7 +73513,17 @@ var CodexVirtualHarness = class _CodexVirtualHarness {
     return this.modelDirectoryPromise;
   }
   modelSelection(sessionId, directory) {
-    return this.selectedModels.get(sessionId) ?? directory?.default ?? modelSelection();
+    const selected = this.selectedModels.get(sessionId);
+    if (selected !== void 0) return selected;
+    const session2 = this.catalog?.sessions.find((item) => item.id === sessionId);
+    if (session2?.model !== void 0) {
+      return {
+        provider: CODEX_PROVIDER,
+        model: session2.model,
+        ...session2.reasoningEffort === void 0 ? {} : { reasoningEffort: session2.reasoningEffort }
+      };
+    }
+    return directory?.default ?? modelSelection();
   }
   permissionSelection(sessionId) {
     return this.selectedPermissions.get(sessionId);
@@ -73847,6 +73916,14 @@ var CodexVirtualHarness = class _CodexVirtualHarness {
     value = adaptCodexHistoryPage(value, this.sessionGeneration);
     if (!isCodexNativeHistoryPage(value, `codex:${threadId}`)) {
       throw new Error("CodeX Remote returned an invalid paginated History.");
+    }
+    const historyModel = string2(value.header.model);
+    if (historyModel !== void 0) {
+      this.selectedModels.set(`codex:${threadId}`, {
+        provider: CODEX_PROVIDER,
+        model: historyModel,
+        ...string2(value.header.reasoningEffort) === void 0 ? {} : { reasoningEffort: string2(value.header.reasoningEffort) }
+      });
     }
     if (Object.hasOwn(value, "permissionPreset")) {
       const preset = value.permissionPreset;
