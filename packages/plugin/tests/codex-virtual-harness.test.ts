@@ -346,6 +346,39 @@ describe('CodexVirtualHarness', () => {
     await target.close()
   })
 
+  it('preserves the model reported by a persisted CodeX Turn', async () => {
+    const client = fakeCodex([{
+      id: 'thr_model',
+      name: 'Model thread',
+      cwd: '/workspace/repo',
+      createdAt: 1_700_000_000,
+      updatedAt: 1_700_000_100,
+      status: { type: 'idle' },
+      turns: [{
+        id: 'turn_model', model: 'gpt-5.6-terra', effort: 'high',
+        items: [{ id: 'assistant_model', type: 'agentMessage', text: 'Using Terra', status: 'completed' }],
+      }],
+    }])
+    const target = new CodexVirtualHarness(client, { deviceId: 'host-1', name: 'Host' })
+    const controller = new AbortController()
+    try {
+      const source = await target.open('session/follow', {
+        args: { request: { address: { kind: 'session', sessionId: 'codex:thr_model' } } },
+      }, controller.signal)
+      const snapshot = await source[Symbol.asyncIterator]().next()
+      expect(snapshot.value).toMatchObject({
+        projections: { values: { modelSelection: { next: { model: 'gpt-5.6-terra' } } } },
+      })
+      const records = (snapshot.value as {
+        records: Array<{ event: { data: { message?: { source?: { model?: string } } } } }>
+      }).records
+      expect(records.some(record => record.event.data.message?.source?.model === 'gpt-5.6-terra')).toBe(true)
+    } finally {
+      controller.abort()
+      await target.close()
+    }
+  })
+
   it('projects CodeX message and MCP result images into native image blocks and virtual attachments', async () => {
     const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lJihxwAAAABJRU5ErkJggg=='
     const client = fakeCodex([{

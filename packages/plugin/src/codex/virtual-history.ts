@@ -1,4 +1,4 @@
-import { projectCodexThread } from '@dsh-remote/client-core'
+import { projectCodexModel, projectCodexThread } from '@dsh-remote/client-core'
 import type { CodexPermissionSnapshot } from '@dsh-remote/protocol'
 import type { HarnessSessionGeneration } from '../harness-version.js'
 import { contentBlocks, toolOutputImageBlocks } from './codex-image-codec.js'
@@ -28,6 +28,8 @@ export interface CodexNativeHistory {
     id: string
     createdAt: number
     cwd?: string
+    model?: string
+    reasoningEffort?: string
     isSeeded?: boolean
   }
   entries: Array<{ type: 'event'; event: NativeEvent; view?: ToolEventView }>
@@ -65,6 +67,14 @@ export function projectCodexNativeHistory(
   let seq = 0
   let turnNumber = 0
   const active = activeTurnId(thread.turns)
+  const threadModel = projectCodexModel(thread)
+  const fallbackSelection: CodexModelSelection = threadModel.model === undefined
+    ? modelSelection()
+    : {
+        provider: 'codex',
+        model: threadModel.model,
+        ...(threadModel.reasoningEffort === undefined ? {} : { reasoningEffort: threadModel.reasoningEffort }),
+      }
   const append = (
     type: string,
     data: unknown,
@@ -103,12 +113,20 @@ export function projectCodexNativeHistory(
     for (let itemIndex = 0;itemIndex < turnItems.length;itemIndex += 1) {
       const item = turnItems[itemIndex]!
       let toolCallSeq: number | undefined
+      const turnModel = projectCodexModel(turn)
+      const selection: CodexModelSelection = turnModel.model === undefined
+        ? fallbackSelection
+        : {
+            provider: 'codex',
+            model: turnModel.model,
+            ...(turnModel.reasoningEffort === undefined ? {} : { reasoningEffort: turnModel.reasoningEffort }),
+          }
       for (const event of itemEvents(
         item,
         turnNumber,
         1,
         undefined,
-        modelSelection(),
+        selection,
         sessionId,
         itemIndex === imageOwner ? toolImages : [],
       )) {
@@ -138,6 +156,8 @@ export function projectCodexNativeHistory(
       id: sessionId,
       createdAt: projected?.createdAt ?? Date.now(),
       ...(projected?.cwd === undefined ? {} : { cwd: projected.cwd }),
+      ...(projected?.model === undefined ? {} : { model: projected.model }),
+      ...(projected?.reasoningEffort === undefined ? {} : { reasoningEffort: projected.reasoningEffort }),
       ...(sessionGeneration === 'v3' ? { isSeeded: false } : {}),
     },
     entries,
@@ -236,6 +256,14 @@ export function itemEvents(
   const type = string(item.type)
   const id = string(item.id) ?? `${turn}:${step}:${hashString(JSON.stringify(item))}`
   const text = itemText(item)
+  const itemModel = projectCodexModel(item)
+  const effectiveSelection = itemModel.model === undefined
+    ? selection
+    : {
+        provider: selection.provider,
+        model: itemModel.model,
+        ...(itemModel.reasoningEffort === undefined ? {} : { reasoningEffort: itemModel.reasoningEffort }),
+      }
   if (type === 'userMessage') return [{
     type: 'user/message',
     data: {
@@ -260,7 +288,7 @@ export function itemEvents(
           text,
           type === 'agentMessage' ? supplementalImages : [],
         ),
-        source: { kind: 'model', provider: selection.provider, model: selection.model },
+        source: { kind: 'model', provider: effectiveSelection.provider, model: effectiveSelection.model },
       },
     },
   }]
@@ -285,7 +313,7 @@ export function itemEvents(
         id,
         role: 'assistant',
         content: [{ type: 'text', text: text ?? 'CodeX reported an error.' }],
-        source: { kind: 'model', provider: selection.provider, model: selection.model },
+        source: { kind: 'model', provider: effectiveSelection.provider, model: effectiveSelection.model },
       },
     },
   }]

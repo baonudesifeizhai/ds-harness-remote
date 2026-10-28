@@ -21,6 +21,9 @@ export interface DisplaySession {
   title?: string
   preview?: string
   cwd?: string
+  /** Model reported by the CodeX Thread or its most recent Turn. */
+  model?: string
+  reasoningEffort?: string
   createdAt: number
   updatedAt: number
   status: 'idle' | 'running' | 'waiting' | 'failed'
@@ -289,6 +292,7 @@ export function projectCodexThread(value: unknown): DisplaySession | undefined {
   if (!isRecord(value) || typeof value.id !== 'string') return undefined
   const createdAt = normalizeTimestamp(value.createdAt)
   const updatedAt = normalizeTimestamp(value.updatedAt) || createdAt
+  const model = projectCodexModel(value)
   return {
     id: `codex:${value.id}`,
     backend: 'codex',
@@ -297,12 +301,44 @@ export function projectCodexThread(value: unknown): DisplaySession | undefined {
     ...(typeof value.name === 'string' && value.name.length > 0 ? { title: value.name } : {}),
     ...(typeof value.preview === 'string' && value.preview.length > 0 ? { preview: value.preview } : {}),
     ...(typeof value.cwd === 'string' ? { cwd: value.cwd } : {}),
+    ...(model.model === undefined ? {} : { model: model.model }),
+    ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
     createdAt,
     updatedAt,
     status: projectThreadStatus(value.status),
     ...(typeof value.archived === 'boolean' ? { archived: value.archived } : {}),
     ...(typeof value.isPinned === 'boolean' ? { pinned: value.isPinned } : {}),
   }
+}
+
+/**
+ * Extract model metadata without assuming one App Server release's exact
+ * Thread shape. Newer servers put it on the Thread, while older responses
+ * expose it only on the most recent Turn.
+ */
+export function projectCodexModel(value: unknown): { model?: string; reasoningEffort?: string } {
+  if (!isRecord(value)) return {}
+  const candidates: unknown[] = []
+  if (Array.isArray(value.turns)) {
+    for (let index = value.turns.length - 1; index >= 0; index -= 1) candidates.push(value.turns[index])
+  }
+  candidates.push(value)
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) continue
+    const model = typeof candidate.model === 'string' && candidate.model.length > 0
+      ? candidate.model
+      : typeof candidate.modelId === 'string' && candidate.modelId.length > 0
+        ? candidate.modelId
+        : undefined
+    if (model === undefined) continue
+    const reasoningEffort = typeof candidate.reasoningEffort === 'string' && candidate.reasoningEffort.length > 0
+      ? candidate.reasoningEffort
+      : typeof candidate.effort === 'string' && candidate.effort.length > 0
+        ? candidate.effort
+        : undefined
+    return { model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) }
+  }
+  return {}
 }
 
 /**

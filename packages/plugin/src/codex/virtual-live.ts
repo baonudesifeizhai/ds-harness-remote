@@ -1,4 +1,5 @@
 import type { CodexPermissionPreset } from '@dsh-remote/protocol'
+import { projectCodexModel } from '@dsh-remote/client-core'
 import type { HarnessSessionGeneration } from '../harness-version.js'
 import { collectImageBlocks, toolOutputImageBlocks } from './codex-image-codec.js'
 import { codexPermissionPresetFromResponse } from './permissions.js'
@@ -60,6 +61,10 @@ export class CodexLiveProjection {
   async sessionFollow(request: JsonRecord, signal: AbortSignal): Promise<AsyncIterable<unknown>> {
     const sessionId = sessionIdFromAddress(record(request.address))
     const threadId = nativeThreadId(sessionId)
+    // Load the Thread catalog before composing the initial projection. The
+    // follow history carries model metadata for individual messages, while
+    // this snapshot needs the latest Thread/Turn model for the picker.
+    await this.context.refreshAndPublishWorkspaces()
     const history = await this.context.readHistoryPage(threadId, {
       maxMessages: optionalPositiveInteger(request.maxMessages),
     }, signal)
@@ -147,6 +152,21 @@ export class CodexLiveProjection {
     }
     if (frame.method === 'turn/started') {
       const turn = record(params.turn)
+      const turnModel = projectCodexModel(turn)
+      if (turnModel.model !== undefined) {
+        const selected: CodexModelSelection = {
+          provider: CODEX_PROVIDER,
+          model: turnModel.model,
+          ...(turnModel.reasoningEffort === undefined ? {} : { reasoningEffort: turnModel.reasoningEffort }),
+        }
+        this.context.selectedModels.set(follow.sessionId, selected)
+        this.context.publishProjection(
+          follow.sessionId,
+          'modelSelection',
+          modelSelectionProjection(selected),
+          this.context.nextProjectionSeq(),
+        )
+      }
       this.endAssistantAttempt(follow, { kind: 'abandoned' })
       this.resetLiveTurn(follow)
       follow.turn += 1

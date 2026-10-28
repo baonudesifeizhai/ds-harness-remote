@@ -53,6 +53,17 @@ describe('Codex display projection', () => {
     })
   })
 
+  it('projects the current model from the latest CodeX Turn', () => {
+    expect(projectCodexThread({
+      id: 'thr_model',
+      model: 'stale-model',
+      turns: [
+        { id: 'turn_old', model: 'old-model', reasoningEffort: 'low' },
+        { id: 'turn_new', model: 'gpt-5.6-terra', effort: 'high' },
+      ],
+    })).toMatchObject({ model: 'gpt-5.6-terra', reasoningEffort: 'high' })
+  })
+
   it('derives deterministic fallback workspaces from unique Thread cwd values', () => {
     const workspaces = deriveCodexCwdWorkspaces([
       { id: 'thr_1', cwd: '/workspace/repo/', createdAt: 20, updatedAt: 30 },

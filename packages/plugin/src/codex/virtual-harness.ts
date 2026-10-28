@@ -367,7 +367,17 @@ export class CodexVirtualHarness implements RemoteTypertGatewayTarget {
   }
 
   private modelSelection(sessionId: string, directory?: CodexModelDirectory): CodexModelSelection {
-    return this.selectedModels.get(sessionId) ?? directory?.default ?? modelSelection()
+    const selected = this.selectedModels.get(sessionId)
+    if (selected !== undefined) return selected
+    const session = this.catalog?.sessions.find(item => item.id === sessionId)
+    if (session?.model !== undefined) {
+      return {
+        provider: CODEX_PROVIDER,
+        model: session.model,
+        ...(session.reasoningEffort === undefined ? {} : { reasoningEffort: session.reasoningEffort }),
+      }
+    }
+    return directory?.default ?? modelSelection()
   }
 
   private permissionSelection(sessionId: string): CodexPermissionPreset | undefined {
@@ -812,6 +822,14 @@ export class CodexVirtualHarness implements RemoteTypertGatewayTarget {
     value = adaptCodexHistoryPage(value, this.sessionGeneration)
     if (!isCodexNativeHistoryPage(value, `codex:${threadId}`)) {
       throw new Error('CodeX Remote returned an invalid paginated History.')
+    }
+    const historyModel = string(value.header.model)
+    if (historyModel !== undefined) {
+      this.selectedModels.set(`codex:${threadId}`, {
+        provider: CODEX_PROVIDER,
+        model: historyModel,
+        ...(string(value.header.reasoningEffort) === undefined ? {} : { reasoningEffort: string(value.header.reasoningEffort) }),
+      })
     }
     if (Object.hasOwn(value, 'permissionPreset')) {
       const preset = value.permissionPreset

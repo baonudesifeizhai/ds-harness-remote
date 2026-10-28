@@ -3,7 +3,7 @@ import type { AcpStream, CodexStream, CodexTimelineState } from '@dsh-remote/cli
 import { workspaceStableKey } from '../lib/workspace-key'
 import { strings as zhCN } from '../locales/i18n'
 import { loadAntigravityCatalog, mergeAntigravityCatalog } from '../services/antigravity'
-import { loadCodexModels } from '../services/codex'
+import { codexModelSelectionFromSession, loadCodexModels } from '../services/codex'
 import { cursorNativeId } from '../services/cursor'
 import { loadOpencodeCatalog, loadOpencodeModels, mergeOpencodeCatalog } from '../services/opencode'
 import { loadClaudeCatalog, loadClaudeModels, mergeClaudeCatalog } from '../services/claude'
@@ -344,7 +344,11 @@ export class SessionRuntime {
 
   async refreshCodexModels(sessionId: string): Promise<void> {
     try {
-      let models = await loadCodexModels(this.connection.requireCodex())
+      const session = this.store.get().selectedSession
+      let models = await loadCodexModels(
+        this.connection.requireCodex(),
+        session?.sessionId === sessionId ? codexModelSelectionFromSession(session) : undefined,
+      )
       const selected = this.codexModelSelections.get(sessionId)
       if (selected !== undefined && models.groups.some(provider => provider.id === selected.provider
         && provider.models.some(model => model.id === selected.model))) {
