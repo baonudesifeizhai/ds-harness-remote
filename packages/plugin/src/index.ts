@@ -30,6 +30,7 @@ import {
   type TuiRemoteBinding,
   type TuiRemoteTarget,
 } from './tui-command.js'
+import { runHmrSafe } from './hmr-safe-settings.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -400,7 +401,7 @@ async function createSettingsBinding(
   if (!isLegacySettingsProvider(settings)) {
     return {
       get: readConfig,
-      replace: async section => { await settings.replace(entryId, section) },
+      replace: section => runHmrSafe<void>(async () => { await settings.replace(entryId, section) }),
     }
   }
   const scope = settings.register(pluginSettingsNamespace, Config, {
@@ -411,7 +412,7 @@ async function createSettingsBinding(
   reportSettingsMigration(ctx, await migrateLegacySettings(settings, scope))
   return {
     get: () => scope.get(),
-    replace: async section => { await scope.replace(section) },
+    replace: section => runHmrSafe<void>(async () => { await scope.replace(section) }),
   }
 }
 

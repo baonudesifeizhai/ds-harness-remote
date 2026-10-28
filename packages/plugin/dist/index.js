@@ -1,5 +1,25 @@
 import { createRequire as __dshCreateRequire } from "node:module";
 const require = __dshCreateRequire(import.meta.url);
+const HMR_SAFE_SETTINGS_PUMP_KEY = Symbol.for("ds-harness-remote.hmr-safe-settings-pump");
+function createHmrSafeSettingsPump() {
+  const queue = [];
+  let wake;
+  let sleeping = new Promise((resolve) => { wake = resolve; });
+  void (async () => {
+    for (;;) {
+      if (queue.length === 0) {
+        await sleeping;
+        sleeping = new Promise((resolve) => { wake = resolve; });
+      }
+      const job = queue.shift();
+      if (job === void 0) continue;
+      try { job.resolve(await job.run()); } catch (error) { job.reject(error); }
+    }
+  })();
+  return { enqueue(run) { return new Promise((resolve, reject) => { queue.push({ run, resolve, reject }); wake(); }); } };
+}
+const hmrSafeSettingsPump = globalThis[HMR_SAFE_SETTINGS_PUMP_KEY] ?? (globalThis[HMR_SAFE_SETTINGS_PUMP_KEY] = createHmrSafeSettingsPump());
+const runHmrSafe = (run) => hmrSafeSettingsPump.enqueue(run);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -90662,9 +90682,7 @@ async function createSettingsBinding(ctx, settings, readConfig, entryId) {
   if (!isLegacySettingsProvider(settings)) {
     return {
       get: readConfig,
-      replace: async (section) => {
-        await settings.replace(entryId, section);
-      }
+      replace: (section) => runHmrSafe(async () => { await settings.replace(entryId, section); })
     };
   }
   const scope2 = settings.register(pluginSettingsNamespace, Config, {
@@ -90677,9 +90695,7 @@ async function createSettingsBinding(ctx, settings, readConfig, entryId) {
   reportSettingsMigration(ctx, await migrateLegacySettings(settings, scope2));
   return {
     get: () => scope2.get(),
-    replace: async (section) => {
-      await scope2.replace(section);
-    }
+    replace: (section) => runHmrSafe(async () => { await scope2.replace(section); })
   };
 }
 function isLegacySettingsProvider(value) {
