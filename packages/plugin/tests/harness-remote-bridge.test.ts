@@ -51,6 +51,81 @@ describe('HarnessRemoteBridge', () => {
     } })))
   })
 
+  it('filters oversized or unknown third-party projections from session/list', async () => {
+    const rawSessions = [
+      {
+        id: 's1',
+        title: 'Session 1',
+        projections: {
+          asOfSeq: 1,
+          values: {
+            permissions: { currentValue: 'default' },
+            remoteStatusKnown: true,
+            codexStatus: 'idle',
+            inbox: { 'next-turn': [] },
+            agentTeam: ['lead', 'helper'],
+            turnOutline: 'x'.repeat(5000), // whitelist key > 4KB, kept!
+            imageLimits: { maxBytes: 1024 },
+            turn: { id: 'turn-1' },
+            turnState: 'running',
+            model: 'gpt-5',
+            status: 'active',
+            activeTurnId: 'turn-1',
+            smallUnknown: { data: 'third-party' }, // unknown key <= 4KB, kept!
+            contextLens: 'x'.repeat(100 * 1024), // unknown key > 4KB, dropped!
+            oversizedPlugin: { data: 'y'.repeat(5000) }, // unknown key > 4KB, dropped!
+          },
+        },
+      },
+    ]
+    const dispatch = vi.fn(async () => ({ ok: true as const, value: { items: rawSessions } }))
+    const bridge = new HarnessRemoteBridge(gateway({ dispatch }), vi.fn(async () => undefined))
+
+    const result = await bridge.call({ endpoint: 'session/list', payload: { args: {} } })
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        items: [
+          {
+            id: 's1',
+            projections: {
+              asOfSeq: 1,
+              values: {
+                permissions: { currentValue: 'default' },
+                remoteStatusKnown: true,
+                codexStatus: 'idle',
+                inbox: { 'next-turn': [] },
+                agentTeam: ['lead', 'helper'],
+                turnOutline: 'x'.repeat(5000),
+                imageLimits: { maxBytes: 1024 },
+                turn: { id: 'turn-1' },
+                turnState: 'running',
+                model: 'gpt-5',
+                status: 'active',
+                activeTurnId: 'turn-1',
+                smallUnknown: { data: 'third-party' },
+              },
+            },
+          },
+        ],
+      },
+    })
+    const filteredSession = (result as { ok: boolean; value: { items: Array<{ projections: { values: Record<string, unknown> } }> } }).value.items[0]
+    expect(filteredSession.projections.values.contextLens).toBeUndefined()
+    expect(filteredSession.projections.values.oversizedPlugin).toBeUndefined()
+    expect(filteredSession.projections.values.smallUnknown).toEqual({ data: 'third-party' })
+    expect(filteredSession.projections.values.turnOutline).toBe('x'.repeat(5000))
+
+    // Also verify direct array format
+    dispatch.mockResolvedValueOnce({ ok: true as const, value: rawSessions as any })
+    const arrayResult = await bridge.call({ endpoint: 'session/list', payload: { args: {} } })
+    const arraySession = (arrayResult as { ok: boolean; value: Array<{ projections: { values: Record<string, unknown> } }> }).value[0]
+    expect(arraySession.projections.values.contextLens).toBeUndefined()
+    expect(arraySession.projections.values.oversizedPlugin).toBeUndefined()
+    expect(arraySession.projections.values.smallUnknown).toEqual({ data: 'third-party' })
+    expect(arraySession.projections.values.turnOutline).toBe('x'.repeat(5000))
+  })
+
   it('forwards only the fixed alpha Gateway endpoint allowlist', async () => {
     const dispatch = vi.fn(async () => ({ ok: true as const, value: [{ id: 'session-1' }] }))
     const bridge = new HarnessRemoteBridge(gateway({ dispatch }), vi.fn(async () => undefined))

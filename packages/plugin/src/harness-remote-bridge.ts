@@ -275,9 +275,12 @@ export class HarnessRemoteBridge {
       // contract stable by converting only the two bounded preview responses
       // to canonical base64. (Codex/ACP workspace bridges already return the
       // wire shape and are left unchanged.)
+      const filteredResult = params.endpoint === 'session/list'
+        ? filterSessionListProjections(result)
+        : result
       const wireResult = normalizeWorkspaceBinaryResult(params.endpoint,
         this.compactHistoryEnabled && ['session/page', 'session/history', 'subagent/history'].includes(params.endpoint)
-          ? compactHistory(result) : result)
+          ? compactHistory(filteredResult) : filteredResult)
       return reservation === undefined ? wireResult : this.terminal.result(params.endpoint, params.payload, wireResult, reservation)
     } catch (error) {
       if (reservation !== undefined) this.terminal.result(params.endpoint, params.payload, { ok: false, error: { code: 'FAILED', message: '', details: {} } }, reservation)
@@ -713,7 +716,111 @@ function needsDirectoryFallback(result: TypertRpcResult): boolean {
     || message.includes('directory-picker-unavailable')
 }
 
-/** Hide this transport's own controls only in the remote inventory projection. */
+const SESSION_PROJECTION_WHITELIST = new Set([
+  'permissions',
+  'remoteStatusKnown',
+  'codexStatus',
+  'inbox',
+  'agentTeam',
+  'turnOutline',
+  'imageLimits',
+  'turn',
+  'turnState',
+  'model',
+  'status',
+  'activeTurnId',
+  'modelSelection',
+  'userQuestions',
+  'agentPreset',
+  'sessionListMetadata',
+  'title',
+  'sessionTitle',
+  'conversationTitle',
+  'label',
+  'name',
+  'summary',
+  'metadata',
+  'session',
+  'data',
+  'view',
+  'sessionStats',
+  'tokenUsage',
+])
+
+const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+const MAX_WHITELIST_PROJECTION_BYTES = 64 * 1024
+const MAX_UNKNOWN_PROJECTION_BYTES = 4096
+
+function filterSessionProjections(session: unknown): unknown {
+  if (!isRecord(session) || !isRecord(session.projections) || !isRecord(session.projections.values)) {
+    return session
+  }
+  const originalValues = session.projections.values
+  const filteredValues: Record<string, unknown> = {}
+  let changed = false
+
+  for (const [key, value] of Object.entries(originalValues)) {
+    if (DANGEROUS_KEYS.has(key)) {
+      changed = true
+      continue
+    }
+    const isWhitelisted = SESSION_PROJECTION_WHITELIST.has(key)
+    const limitBytes = isWhitelisted ? MAX_WHITELIST_PROJECTION_BYTES : MAX_UNKNOWN_PROJECTION_BYTES
+    try {
+      const serialized = JSON.stringify(value)
+      if (typeof serialized === 'string' && Buffer.byteLength(serialized, 'utf8') <= limitBytes) {
+        filteredValues[key] = value
+      } else {
+        changed = true
+      }
+    } catch {
+      changed = true
+    }
+  }
+
+  if (!changed) return session
+
+  return {
+    ...session,
+    projections: {
+      ...session.projections,
+      values: filteredValues,
+    },
+  }
+}
+
+export function filterSessionListProjections(result: TypertRpcResult): TypertRpcResult
+export function filterSessionListProjections(endpoint: string, result: TypertRpcResult): TypertRpcResult
+export function filterSessionListProjections(
+  resultOrEndpoint: TypertRpcResult | string,
+  maybeResult?: TypertRpcResult,
+): TypertRpcResult {
+  const result = typeof resultOrEndpoint === 'string' ? maybeResult! : resultOrEndpoint
+  if (typeof resultOrEndpoint === 'string' && resultOrEndpoint !== 'session/list' && resultOrEndpoint !== 'session/search') return result
+  if (!result || !result.ok) return result
+  const filterList = (items: unknown[]): unknown[] => items.map(filterSessionProjections)
+  if (isRecord(result.value)) {
+    let changed = false
+    const updated = { ...result.value }
+    if (Array.isArray(result.value.items)) {
+      updated.items = filterList(result.value.items)
+      changed = true
+    }
+    if (Array.isArray(result.value.sessions)) {
+      updated.sessions = filterList(result.value.sessions)
+      changed = true
+    }
+    if (changed) return { ...result, value: updated }
+  }
+  if (Array.isArray(result.value)) {
+    return {
+      ...result,
+      value: filterList(result.value),
+    }
+  }
+  return result
+}
+
 function filterRemotePluginInventory(endpoint: string, result: TypertRpcResult): TypertRpcResult {
   if (!result.ok) return result
   const isRemote = (value: unknown): boolean => typeof value === 'string'

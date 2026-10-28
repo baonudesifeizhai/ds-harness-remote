@@ -174,12 +174,14 @@ describe('ConnectionController', () => {
 
   it('returns a small RPC error instead of silently dropping an oversized response', async () => {
     const oversized = createRpcResponse('request-1', { value: 'x'.repeat(MAX_SECURE_MESSAGE_BYTES) })
+    const logger = { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() }
     const controller = new ConnectionController(
       { isTrusted: () => true } as unknown as IdentityStore,
       () => ({
         handle: vi.fn(async () => oversized),
         closePeerStreams: vi.fn(async () => undefined),
       } as unknown as RpcRouter),
+      logger as any,
     )
     const channel = fakeChannel()
     await controller.accept(channel)
@@ -194,7 +196,48 @@ describe('ConnectionController', () => {
         retryable: true,
       }),
     }))
+    expect(logger.warn).toHaveBeenCalledWith('host response exceeds secure channel', expect.objectContaining({
+      endpoint: 'session.history',
+      bytes: expect.any(Number),
+      limit: MAX_SECURE_MESSAGE_BYTES,
+    }))
     expect(channel.close).not.toHaveBeenCalled()
+  })
+
+  it('logs a warning with the requested endpoint when a response exceeds the secure message limit', async () => {
+    const oversized = createRpcResponse('req-oversized', { value: 'x'.repeat(MAX_SECURE_MESSAGE_BYTES) })
+    const logger = { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() }
+    const controller = new ConnectionController(
+      { isTrusted: () => true } as unknown as IdentityStore,
+      () => ({
+        handle: vi.fn(async () => oversized),
+        closePeerStreams: vi.fn(async () => undefined),
+      } as unknown as RpcRouter),
+      logger as any,
+    )
+    const channel = fakeChannel()
+    await controller.accept(channel)
+
+    channel.push({
+      v: 1,
+      id: 'req-oversized',
+      type: 'rpc-request' as any,
+      timestamp: Date.now(),
+      payload: { endpoint: 'session/list' },
+    })
+
+    await vi.waitFor(() => expect(channel.send).toHaveBeenCalledOnce())
+    expect(logger.warn).toHaveBeenCalledWith('host response exceeds secure channel', {
+      endpoint: 'session/list',
+      bytes: expect.any(Number),
+      limit: MAX_SECURE_MESSAGE_BYTES,
+    })
+    expect(channel.send).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'rpc.error',
+      payload: expect.objectContaining({
+        code: 'RESPONSE_TOO_LARGE',
+      }),
+    }))
   })
 
 })

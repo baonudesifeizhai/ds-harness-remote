@@ -655,6 +655,92 @@ describe('RemoteTypertGateway', () => {
             expect(methods).not.toContain('harness.remote.transfer.read')
           },
         },
+        {
+          name: 'fails with RPC_TIMEOUT when a chunk read times out',
+          run: async () => {
+            let transferId = ''
+            const rpc = vi.fn(async (method: string, params: unknown) => {
+              if (method === 'harness.remote.call')
+                throw Object.assign(new Error('too large'), { code: 'RESPONSE_TOO_LARGE' })
+              if (method === 'harness.remote.transfer.open') {
+                transferId = (params as { transferId: string }).transferId
+                return { opened: true }
+              }
+              if (method === 'harness.remote.transfer.commit') {
+                return { kind: 'chunked', transferId: (params as { transferId: string }).transferId, totalBytes: 100, totalChunks: 1 }
+              }
+              if (method === 'harness.remote.transfer.read') {
+                throw Object.assign(new Error('RPC timed out'), { code: 'RPC_TIMEOUT' })
+              }
+              return { accepted: true }
+            })
+            const client = { rpc } as unknown as RemoteClientCore
+
+            await expect(
+              new RemoteTypertGateway(client).call('officeToPdf/render', { args: {} }, undefined, {
+                chunkTimeoutMs: 5_000,
+              }),
+            ).rejects.toMatchObject({
+              code: 'RPC_TIMEOUT',
+              details: expect.objectContaining({
+                transferId: expect.any(String),
+                index: 0,
+                totalChunks: 1,
+              }),
+            })
+          },
+        },
+        {
+          name: 'fails with TRANSFER_FAILED when a chunk read encounters a network error',
+          run: async () => {
+            let transferId = ''
+            const rpc = vi.fn(async (method: string, params: unknown) => {
+              if (method === 'harness.remote.call')
+                throw Object.assign(new Error('too large'), { code: 'RESPONSE_TOO_LARGE' })
+              if (method === 'harness.remote.transfer.open') {
+                transferId = (params as { transferId: string }).transferId
+                return { opened: true }
+              }
+              if (method === 'harness.remote.transfer.commit') {
+                return { kind: 'chunked', transferId: (params as { transferId: string }).transferId, totalBytes: 100, totalChunks: 1 }
+              }
+              if (method === 'harness.remote.transfer.read') {
+                throw new Error('Connection reset by peer')
+              }
+              return { accepted: true }
+            })
+            const client = { rpc } as unknown as RemoteClientCore
+
+            await expect(
+              new RemoteTypertGateway(client).call('officeToPdf/render', { args: {} }),
+            ).rejects.toMatchObject({
+              code: 'TRANSFER_FAILED',
+              details: expect.objectContaining({
+                index: 0,
+                totalChunks: 1,
+              }),
+            })
+          },
+        },
+        {
+          name: 'rejects an invalid transfer chunk timeout option',
+          run: async () => {
+            const rpc = vi.fn(async (method: string) => {
+              if (method === 'harness.remote.call')
+                throw Object.assign(new Error('too large'), { code: 'RESPONSE_TOO_LARGE' })
+              return { opened: true }
+            })
+            const client = { rpc } as unknown as RemoteClientCore
+
+            for (const chunkTimeoutMs of [0, -1, 1.5, Number.NaN]) {
+              await expect(
+                new RemoteTypertGateway(client).call('officeToPdf/render', { args: {} }, undefined, {
+                  chunkTimeoutMs,
+                }),
+              ).rejects.toMatchObject({ code: 'INVALID_MESSAGE' })
+            }
+          },
+        },
       ],
       async () => {
         await cleanupContract1()

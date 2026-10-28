@@ -86937,13 +86937,25 @@ var ConnectionController = class {
     try {
       const response = await connection.router.handle(message);
       if (!this.isActive(connection)) return;
-      const outbound = encodeMessage(response).byteLength <= MAX_SECURE_MESSAGE_BYTES ? response : createRpcError(
-        message.id,
-        "RESPONSE_TOO_LARGE",
-        "The Host response is too large for the secure Remote channel. Request a smaller page.",
-        { maxBytes: MAX_SECURE_MESSAGE_BYTES },
-        true
-      );
+      const responseBytes = encodeMessage(response).byteLength;
+      let outbound;
+      if (responseBytes <= MAX_SECURE_MESSAGE_BYTES) {
+        outbound = response;
+      } else {
+        const endpoint = message.type === "rpc-request" && isRecord20(message.payload) && typeof message.payload.endpoint === "string" ? message.payload.endpoint : extractEndpoint(message);
+        this.logger?.warn("host response exceeds secure channel", {
+          endpoint,
+          bytes: responseBytes,
+          limit: MAX_SECURE_MESSAGE_BYTES
+        });
+        outbound = createRpcError(
+          message.id,
+          "RESPONSE_TOO_LARGE",
+          "The Host response is too large for the secure Remote channel. Request a smaller page.",
+          { maxBytes: MAX_SECURE_MESSAGE_BYTES },
+          true
+        );
+      }
       await connection.channel.send(outbound);
     } catch (error) {
       this.logger?.warn("peer message handling failed; disconnecting", {
@@ -87005,7 +87017,21 @@ var ConnectionRejectedError = class extends Error {
 };
 function diagnosticReason2(error) {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/[\r\n]+/g, " ").slice(0, 160) || "Unknown peer connection failure.";
+  return message.replace(/\s+/g, " ").slice(0, 160) || "Unknown peer connection failure.";
+}
+function extractEndpoint(message) {
+  if (!isRecord20(message) || !isRecord20(message.payload)) return void 0;
+  const payload = message.payload;
+  if (isRecord20(payload.params)) {
+    if (typeof payload.params.endpoint === "string") return payload.params.endpoint;
+    if (typeof payload.params.method === "string") return payload.params.method;
+  }
+  if (typeof payload.endpoint === "string") return payload.endpoint;
+  if (typeof payload.method === "string") return payload.method;
+  return void 0;
+}
+function isRecord20(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function shortId2(value) {
   return value.length <= 12 ? value : `${value.slice(0, 8)}\u2026${value.slice(-4)}`;
@@ -88563,9 +88589,10 @@ var HarnessRemoteBridge = class {
         endpoint: params.endpoint,
         durationMs: Math.round(performance.now() - startedAt)
       });
+      const filteredResult = params.endpoint === "session/list" ? filterSessionListProjections(result) : result;
       const wireResult = normalizeWorkspaceBinaryResult2(
         params.endpoint,
-        this.compactHistoryEnabled && ["session/page", "session/history", "subagent/history"].includes(params.endpoint) ? compactHistory(result) : result
+        this.compactHistoryEnabled && ["session/page", "session/history", "subagent/history"].includes(params.endpoint) ? compactHistory(filteredResult) : filteredResult
       );
       return reservation === void 0 ? wireResult : this.terminal.result(params.endpoint, params.payload, wireResult, reservation);
     } catch (error) {
@@ -88750,10 +88777,10 @@ var HarnessRemoteBridge = class {
     const args = parsed.data.args;
     const result = await this.gateway.dispatch(plugin ? "pluginManager/listPlugins" : "pluginManager/listBundles", { args: {} }, AbortSignal.timeout(6e4));
     if (!result.ok || !Array.isArray(result.value)) throw new RpcError("PERMISSION_DENIED", "Cannot verify the Host plugin inventory.");
-    const row = result.value.find((value) => isRecord20(value) && value[plugin ? "entryId" : "name"] === args[key]);
-    if (!isRecord20(row) || row.readOnlyReason !== void 0) throw new RpcError("PERMISSION_DENIED", "The Host plugin cannot be changed remotely.");
+    const row = result.value.find((value) => isRecord21(value) && value[plugin ? "entryId" : "name"] === args[key]);
+    if (!isRecord21(row) || row.readOnlyReason !== void 0) throw new RpcError("PERMISSION_DENIED", "The Host plugin cannot be changed remotely.");
     const remoteModule = (value) => typeof value === "string" && /^(?:ds-harness-remote|dsh-remote)(?:\/|$)/.test(value);
-    if (remoteModule(plugin ? row.moduleName : row.name) || !plugin && (!Array.isArray(row.rows) || row.rows.some((value) => !isRecord20(value) || remoteModule(value.moduleName)) || Array.isArray(row.overrides) && row.overrides.some((value) => remoteModule(value) || value === "ds-harness-remote-tui"))) {
+    if (remoteModule(plugin ? row.moduleName : row.name) || !plugin && (!Array.isArray(row.rows) || row.rows.some((value) => !isRecord21(value) || remoteModule(value.moduleName)) || Array.isArray(row.overrides) && row.overrides.some((value) => remoteModule(value) || value === "ds-harness-remote-tui"))) {
       throw new RpcError("PERMISSION_DENIED", "The Remote plugin can only be enabled or disabled locally on the Host.");
     }
   }
@@ -88842,11 +88869,11 @@ var HarnessRemoteBridge = class {
 };
 function normalizeWorkspaceChangesPayload(endpoint, payload, harnessVersion) {
   if (endpoint !== "workspaceFiles/changes" || !requiresWorkspaceChangePath(harnessVersion)) return payload;
-  if (!isRecord20(payload) || !isRecord20(payload.args) || Object.hasOwn(payload.args, "path")) return payload;
+  if (!isRecord21(payload) || !isRecord21(payload.args) || Object.hasOwn(payload.args, "path")) return payload;
   return { ...payload, args: { ...payload.args, path: "." } };
 }
 function normalizeWorkspaceRequestPayload(endpoint, payload, harnessVersion) {
-  if (!isRecord20(payload) || !isRecord20(payload.args)) return payload;
+  if (!isRecord21(payload) || !isRecord21(payload.args)) return payload;
   const args = payload.args;
   if (endpoint === "workspaceFiles/readBytes" && requiresWorkspaceChangePath(harnessVersion)) {
     if (!Object.hasOwn(args, "range") || Object.hasOwn(args, "options")) return payload;
@@ -88942,30 +88969,123 @@ function needsDirectoryFallback(result) {
   const message = result.error.message.toLocaleLowerCase();
   return code.includes("capability") || code === "directory-picker/unavailable" || code === "directory-picker-unavailable" || message.includes("browse capability") || message.includes("browser capability") || message.includes("brower capability") || message.includes("directory-picker-unavailable");
 }
+var SESSION_PROJECTION_WHITELIST = /* @__PURE__ */ new Set([
+  "permissions",
+  "remoteStatusKnown",
+  "codexStatus",
+  "inbox",
+  "agentTeam",
+  "turnOutline",
+  "imageLimits",
+  "turn",
+  "turnState",
+  "model",
+  "status",
+  "activeTurnId",
+  "modelSelection",
+  "userQuestions",
+  "agentPreset",
+  "sessionListMetadata",
+  "title",
+  "sessionTitle",
+  "conversationTitle",
+  "label",
+  "name",
+  "summary",
+  "metadata",
+  "session",
+  "data",
+  "view",
+  "sessionStats",
+  "tokenUsage"
+]);
+var DANGEROUS_KEYS = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+var MAX_WHITELIST_PROJECTION_BYTES = 64 * 1024;
+var MAX_UNKNOWN_PROJECTION_BYTES = 4096;
+function filterSessionProjections(session2) {
+  if (!isRecord21(session2) || !isRecord21(session2.projections) || !isRecord21(session2.projections.values)) {
+    return session2;
+  }
+  const originalValues = session2.projections.values;
+  const filteredValues = {};
+  let changed = false;
+  for (const [key, value] of Object.entries(originalValues)) {
+    if (DANGEROUS_KEYS.has(key)) {
+      changed = true;
+      continue;
+    }
+    const isWhitelisted = SESSION_PROJECTION_WHITELIST.has(key);
+    const limitBytes = isWhitelisted ? MAX_WHITELIST_PROJECTION_BYTES : MAX_UNKNOWN_PROJECTION_BYTES;
+    try {
+      const serialized = JSON.stringify(value);
+      if (typeof serialized === "string" && Buffer.byteLength(serialized, "utf8") <= limitBytes) {
+        filteredValues[key] = value;
+      } else {
+        changed = true;
+      }
+    } catch {
+      changed = true;
+    }
+  }
+  if (!changed) return session2;
+  return {
+    ...session2,
+    projections: {
+      ...session2.projections,
+      values: filteredValues
+    }
+  };
+}
+function filterSessionListProjections(resultOrEndpoint, maybeResult) {
+  const result = typeof resultOrEndpoint === "string" ? maybeResult : resultOrEndpoint;
+  if (typeof resultOrEndpoint === "string" && resultOrEndpoint !== "session/list" && resultOrEndpoint !== "session/search") return result;
+  if (!result || !result.ok) return result;
+  const filterList = (items) => items.map(filterSessionProjections);
+  if (isRecord21(result.value)) {
+    let changed = false;
+    const updated = { ...result.value };
+    if (Array.isArray(result.value.items)) {
+      updated.items = filterList(result.value.items);
+      changed = true;
+    }
+    if (Array.isArray(result.value.sessions)) {
+      updated.sessions = filterList(result.value.sessions);
+      changed = true;
+    }
+    if (changed) return { ...result, value: updated };
+  }
+  if (Array.isArray(result.value)) {
+    return {
+      ...result,
+      value: filterList(result.value)
+    };
+  }
+  return result;
+}
 function filterRemotePluginInventory(endpoint, result) {
   if (!result.ok) return result;
   const isRemote = (value) => typeof value === "string" && /^(?:ds-harness-remote|dsh-remote)(?:\/|$)/.test(value);
-  const filterEntries = (entries) => entries.filter((entry) => !isRecord20(entry) || !isRemote(entry.moduleName));
+  const filterEntries = (entries) => entries.filter((entry) => !isRecord21(entry) || !isRemote(entry.moduleName));
   if (endpoint === "pluginManager/listPlugins" && Array.isArray(result.value)) {
     return { ...result, value: filterEntries(result.value) };
   }
   if (endpoint === "pluginManager/listBundles" && Array.isArray(result.value)) {
-    return { ...result, value: result.value.filter((bundle) => !isRecord20(bundle) || !isRemote(bundle.name)).map((bundle) => isRecord20(bundle) && Array.isArray(bundle.rows) ? { ...bundle, rows: filterEntries(bundle.rows) } : bundle) };
+    return { ...result, value: result.value.filter((bundle) => !isRecord21(bundle) || !isRemote(bundle.name)).map((bundle) => isRecord21(bundle) && Array.isArray(bundle.rows) ? { ...bundle, rows: filterEntries(bundle.rows) } : bundle) };
   }
-  if (endpoint === "pluginInventory/list" && isRecord20(result.value) && Array.isArray(result.value.entries)) {
+  if (endpoint === "pluginInventory/list" && isRecord21(result.value) && Array.isArray(result.value.entries)) {
     return { ...result, value: { ...result.value, entries: filterEntries(result.value.entries) } };
   }
   return result;
 }
 function requestArgs(payload) {
   const root = record9(payload);
-  const args = isRecord20(root.args) ? root.args : root;
+  const args = isRecord21(root.args) ? root.args : root;
   return record9(args.request ?? args._request ?? args);
 }
 function record9(value) {
-  return isRecord20(value) ? value : {};
+  return isRecord21(value) ? value : {};
 }
-function isRecord20(value) {
+function isRecord21(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function isCompactSnapshot(value) {
