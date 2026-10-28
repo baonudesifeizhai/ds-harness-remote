@@ -275,9 +275,7 @@ export class HarnessRemoteBridge {
       // contract stable by converting only the two bounded preview responses
       // to canonical base64. (Codex/ACP workspace bridges already return the
       // wire shape and are left unchanged.)
-      const filteredResult = params.endpoint === 'session/list'
-        ? filterSessionListProjections(result)
-        : result
+      const filteredResult = filterSessionListProjections(params.endpoint, result)
       const wireResult = normalizeWorkspaceBinaryResult(params.endpoint,
         this.compactHistoryEnabled && ['session/page', 'session/history', 'subagent/history'].includes(params.endpoint)
           ? compactHistory(filteredResult) : filteredResult)

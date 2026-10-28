@@ -175,9 +175,7 @@ export class ConnectionController {
       if (responseBytes <= MAX_SECURE_MESSAGE_BYTES) {
         outbound = response
       } else {
-        const endpoint = ((message.type as string) === 'rpc-request' && isRecord(message.payload) && typeof message.payload.endpoint === 'string')
-          ? message.payload.endpoint
-          : extractEndpoint(message)
+        const endpoint = extractEndpoint(message)
         this.logger?.warn('host response exceeds secure channel', {
           endpoint,
           bytes: responseBytes,

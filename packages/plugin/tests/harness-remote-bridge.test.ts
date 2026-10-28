@@ -126,6 +126,30 @@ describe('HarnessRemoteBridge', () => {
     expect(arraySession.projections.values.turnOutline).toBe('x'.repeat(5000))
   })
 
+  it('prunes session catalog projections on list and search without changing detail responses', async () => {
+    const session = { id: 's1', projections: { asOfSeq: 1, values: {
+      permissions: { currentValue: 'default' },
+      contextLens: '界'.repeat(2_000), // UTF-8 bytes, rather than JS string length.
+    } } }
+    await runScenarios(['session/list', 'session/search'].flatMap(endpoint => [
+      { name: `${endpoint}: items`, value: { items: [session], nextCursor: 'next' } },
+      { name: `${endpoint}: sessions`, value: { sessions: [session], nextCursor: 'next' } },
+      { name: `${endpoint}: array`, value: [session] },
+    ].map(({ name, value }) => ({ name, run: async () => {
+      const dispatch = vi.fn(async () => ({ ok: true as const, value }))
+      const bridge = new HarnessRemoteBridge(gateway({ dispatch }), vi.fn())
+      const result = await bridge.call({ endpoint, payload: { args: {} } })
+      const text = JSON.stringify(result)
+      expect(text).not.toContain('contextLens')
+      expect(text).toContain('permissions')
+      if (!Array.isArray(value)) expect(text).toContain('nextCursor')
+      expect(session.projections.values.contextLens).toHaveLength(2_000)
+    } }))))
+    const original = { ok: true as const, value: session }
+    const bridge = new HarnessRemoteBridge(gateway({ dispatch: vi.fn(async () => original) }), vi.fn())
+    await expect(bridge.call({ endpoint: 'session/projections', payload: { args: {} } })).resolves.toEqual(original)
+  })
+
   it('forwards only the fixed alpha Gateway endpoint allowlist', async () => {
     const dispatch = vi.fn(async () => ({ ok: true as const, value: [{ id: 'session-1' }] }))
     const bridge = new HarnessRemoteBridge(gateway({ dispatch }), vi.fn(async () => undefined))

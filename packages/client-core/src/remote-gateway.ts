@@ -279,21 +279,24 @@ export class RemoteTypertGateway {
     const maxResponseBytes = transferResponseLimit(options)
     const totalChunks = Math.ceil(encoded.byteLength / HARNESS_API_TRANSFER_CHUNK_BYTES)
     const overallTimeoutMs = options?.timeoutMs ?? Math.max(DEFAULT_TRANSFER_TIMEOUT_MS, totalChunks * 2_000)
+    if (!Number.isSafeInteger(overallTimeoutMs) || overallTimeoutMs <= 0 || overallTimeoutMs > 2_147_483_647) {
+      throw new RemoteGatewayError('INVALID_MESSAGE', 'The requested Harness transfer timeout is invalid.')
+    }
     const deadline = performance.now() + overallTimeoutMs
     const customChunkTimeout = transferChunkTimeout(options)
-    const perChunkLimit = customChunkTimeout ?? Math.min(overallTimeoutMs, DEFAULT_TRANSFER_CHUNK_TIMEOUT_MS)
     const transferId = createRemoteId()
 
-    const stepTimeout = (step: string): number | undefined => {
-      const remainingMs = deadline - performance.now()
+    const stepTimeout = (step: string, limitMs = overallTimeoutMs, details: Record<string, unknown> = {}): number => {
+      const remainingMs = Math.floor(deadline - performance.now())
       if (remainingMs <= 0) {
         throw new RemoteGatewayError(
           'RPC_TIMEOUT',
           `The Harness Remote transfer timed out after ${overallTimeoutMs}ms before step: ${step}.`,
-          { transferId, step, totalChunks, timeoutMs: overallTimeoutMs },
+          { transferId, step, totalChunks, timeoutMs: overallTimeoutMs, ...details },
         )
       }
-      return customChunkTimeout !== undefined ? Math.min(remainingMs, customChunkTimeout) : options?.timeoutMs
+      // RemoteClientCore accepts only positive integer timer durations.
+      return Math.min(remainingMs, limitMs)
     }
 
     let opened = false
@@ -302,7 +305,7 @@ export class RemoteTypertGateway {
         transferId,
         totalBytes: encoded.byteLength,
         totalChunks,
-      }, signal, options?.timeoutMs !== undefined ? { ...options, timeoutMs: stepTimeout('open') } : options)
+      }, signal, { ...options, timeoutMs: stepTimeout('open', customChunkTimeout ?? DEFAULT_TRANSFER_CHUNK_TIMEOUT_MS) })
       opened = true
       for (let index = 0; index < totalChunks; index += 1) {
         const start = index * HARNESS_API_TRANSFER_CHUNK_BYTES
@@ -311,13 +314,14 @@ export class RemoteTypertGateway {
           transferId,
           index,
           data: bytesToBase64(chunk),
-        }, signal, options?.timeoutMs !== undefined ? { ...options, timeoutMs: stepTimeout(`chunk:${index}`) } : options)
+        }, signal, { ...options, timeoutMs: stepTimeout(`chunk:${index}`, customChunkTimeout ?? DEFAULT_TRANSFER_CHUNK_TIMEOUT_MS) })
       }
       const committed = await this.client.rpc<HarnessApiTransferCommitResult>(
         'harness.remote.transfer.commit',
         { transferId },
         signal,
-        options?.timeoutMs !== undefined ? { ...options, timeoutMs: stepTimeout('commit') } : options,
+        // Commit runs the endpoint itself, so retain long Office conversion budgets.
+        { ...options, timeoutMs: stepTimeout('commit') },
       )
       if (committed.kind === 'inline') return committed.response
       if (committed.kind !== 'chunked'
@@ -340,17 +344,9 @@ export class RemoteTypertGateway {
       const responseBytes = new Uint8Array(committed.totalBytes)
       let offset = 0
       for (let index = 0; index < committed.totalChunks; index += 1) {
-        const remainingMs = deadline - performance.now()
-        if (remainingMs <= 0) {
-          throw new RemoteGatewayError(
-            'RPC_TIMEOUT',
-            `The Harness Remote transfer timed out after ${overallTimeoutMs}ms during chunk read loop.`,
-            { transferId, index, receivedChunks: index, totalChunks: committed.totalChunks, totalBytes: committed.totalBytes, timeoutMs: overallTimeoutMs },
-          )
-        }
-        const chunkTimeoutMs = customChunkTimeout !== undefined
-          ? Math.max(1, Math.min(remainingMs, customChunkTimeout))
-          : (options?.timeoutMs !== undefined ? Math.max(1, Math.min(remainingMs, options.timeoutMs)) : Math.max(1, Math.min(remainingMs, DEFAULT_TRANSFER_CHUNK_TIMEOUT_MS)))
+        const chunkTimeoutMs = stepTimeout(`read:${index}`, customChunkTimeout ?? DEFAULT_TRANSFER_CHUNK_TIMEOUT_MS, {
+          index, receivedChunks: index, totalChunks: committed.totalChunks, totalBytes: committed.totalBytes,
+        })
         try {
           const result = await this.client.rpc<HarnessApiTransferReadResult>(
             'harness.remote.transfer.read',
@@ -540,7 +536,7 @@ function transferResponseLimit(options: RemoteGatewayOptions | undefined): numbe
 function transferChunkTimeout(options: RemoteGatewayOptions | undefined): number | undefined {
   const chunkTimeoutMs = options?.chunkTimeoutMs
   if (chunkTimeoutMs === undefined) return undefined
-  if (!Number.isSafeInteger(chunkTimeoutMs) || chunkTimeoutMs <= 0) {
+  if (!Number.isSafeInteger(chunkTimeoutMs) || chunkTimeoutMs <= 0 || chunkTimeoutMs > 2_147_483_647) {
     throw new RemoteGatewayError('INVALID_MESSAGE', 'The requested Harness transfer chunk timeout is invalid.')
   }
   return chunkTimeoutMs

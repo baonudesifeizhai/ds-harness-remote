@@ -1,25 +1,5 @@
 import { createRequire as __dshCreateRequire } from "node:module";
 const require = __dshCreateRequire(import.meta.url);
-const HMR_SAFE_SETTINGS_PUMP_KEY = Symbol.for("ds-harness-remote.hmr-safe-settings-pump");
-function createHmrSafeSettingsPump() {
-  const queue = [];
-  let wake;
-  let sleeping = new Promise((resolve) => { wake = resolve; });
-  void (async () => {
-    for (;;) {
-      if (queue.length === 0) {
-        await sleeping;
-        sleeping = new Promise((resolve) => { wake = resolve; });
-      }
-      const job = queue.shift();
-      if (job === void 0) continue;
-      try { job.resolve(await job.run()); } catch (error) { job.reject(error); }
-    }
-  })();
-  return { enqueue(run) { return new Promise((resolve, reject) => { queue.push({ run, resolve, reject }); wake(); }); } };
-}
-const hmrSafeSettingsPump = globalThis[HMR_SAFE_SETTINGS_PUMP_KEY] ?? (globalThis[HMR_SAFE_SETTINGS_PUMP_KEY] = createHmrSafeSettingsPump());
-const runHmrSafe = (run) => hmrSafeSettingsPump.enqueue(run);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -86942,7 +86922,7 @@ var ConnectionController = class {
       if (responseBytes <= MAX_SECURE_MESSAGE_BYTES) {
         outbound = response;
       } else {
-        const endpoint = message.type === "rpc-request" && isRecord20(message.payload) && typeof message.payload.endpoint === "string" ? message.payload.endpoint : extractEndpoint(message);
+        const endpoint = extractEndpoint(message);
         this.logger?.warn("host response exceeds secure channel", {
           endpoint,
           bytes: responseBytes,
@@ -88589,7 +88569,7 @@ var HarnessRemoteBridge = class {
         endpoint: params.endpoint,
         durationMs: Math.round(performance.now() - startedAt)
       });
-      const filteredResult = params.endpoint === "session/list" ? filterSessionListProjections(result) : result;
+      const filteredResult = filterSessionListProjections(params.endpoint, result);
       const wireResult = normalizeWorkspaceBinaryResult2(
         params.endpoint,
         this.compactHistoryEnabled && ["session/page", "session/history", "subagent/history"].includes(params.endpoint) ? compactHistory(filteredResult) : filteredResult
@@ -90450,6 +90430,46 @@ function wait(milliseconds) {
   return new Promise((resolve6) => setTimeout(resolve6, milliseconds));
 }
 
+// src/hmr-safe-settings.ts
+var PUMP_KEY = Symbol.for("ds-harness-remote.hmr-safe-settings-pump");
+function createPump() {
+  const queue = [];
+  let wake;
+  let sleeping = new Promise((resolve6) => {
+    wake = resolve6;
+  });
+  void (async () => {
+    for (; ; ) {
+      if (queue.length === 0) {
+        await sleeping;
+        sleeping = new Promise((resolve6) => {
+          wake = resolve6;
+        });
+      }
+      const job = queue.shift();
+      if (job === void 0) continue;
+      try {
+        job.resolve(await job.run());
+      } catch (error) {
+        job.reject(error);
+      }
+    }
+  })();
+  return {
+    enqueue(run) {
+      return new Promise((resolve6, reject) => {
+        queue.push({ run, resolve: resolve6, reject });
+        wake();
+      });
+    }
+  };
+}
+var globalState = globalThis;
+var pump = globalState[PUMP_KEY] ?? (globalState[PUMP_KEY] = createPump());
+function runHmrSafe(run) {
+  return pump.enqueue(run);
+}
+
 // src/remote-file-content-provider.ts
 var REMOTE_FILE_SAVE_AS_MAX_BYTES = 100 * 1024 * 1024;
 var REMOTE_FILE_FAST_SAVE_AS_MAX_BYTES = 1024 * 1024 * 1024;
@@ -90802,7 +90822,9 @@ async function createSettingsBinding(ctx, settings, readConfig, entryId) {
   if (!isLegacySettingsProvider(settings)) {
     return {
       get: readConfig,
-      replace: (section) => runHmrSafe(async () => { await settings.replace(entryId, section); })
+      replace: (section) => runHmrSafe(async () => {
+        await settings.replace(entryId, section);
+      })
     };
   }
   const scope2 = settings.register(pluginSettingsNamespace, Config, {
@@ -90815,7 +90837,9 @@ async function createSettingsBinding(ctx, settings, readConfig, entryId) {
   reportSettingsMigration(ctx, await migrateLegacySettings(settings, scope2));
   return {
     get: () => scope2.get(),
-    replace: (section) => runHmrSafe(async () => { await scope2.replace(section); })
+    replace: (section) => runHmrSafe(async () => {
+      await scope2.replace(section);
+    })
   };
 }
 function isLegacySettingsProvider(value) {
