@@ -252,7 +252,7 @@ export class PluginControlRuntime {
     const current = editableConfig(resolveConfig(this.settings.get()))
     const next = resolveConfig({ ...current,
       terminal: { enabled: value.terminalEnabled === undefined ? (current.terminal?.enabled ?? true) : value.terminalEnabled },
-      remoteTools: { enabled: value.remoteToolsEnabled === undefined ? (current.remoteTools?.enabled ?? false) : value.remoteToolsEnabled },
+      remoteTools: { enabled: value.remoteToolsEnabled === undefined ? (current.remoteTools?.enabled ?? true) : value.remoteToolsEnabled },
       loopback: { ports: value.ports === undefined ? (current.loopback?.ports ?? []) : value.ports },
     })
     await this.settings.replace(editableConfig(next))

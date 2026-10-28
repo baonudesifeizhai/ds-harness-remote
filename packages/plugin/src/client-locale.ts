@@ -3,7 +3,7 @@ export const localeNamespace = 'ds-harness-remote'
 
 export const en = {
   remoteTools: 'Inject Remote Tools',
-  remoteToolsHint: 'Expose remote_* tools in sessions. Off by default; changes apply after restarting the Host.',
+  remoteToolsHint: 'Expose remote_* tools in sessions. On by default; turn it off when you do not need them. Changes apply after restarting the Host.',
   remoteToolsSaved: 'Remote Tools setting saved.',
   terminalRemote: 'Remote terminal',
   terminalRemoteHint: 'Allow trusted Remote devices to run an interactive shell as this Host user. On by default; independent of Agent approvals. Toggling saves and applies immediately.',
@@ -282,7 +282,7 @@ export const en = {
 
 export const zh: Record<keyof typeof en, string> = {
   remoteTools: '注入 Remote Tools',
-  remoteToolsHint: '在会话中注入 remote_* 工具。默认关闭；重启 Host 后生效。',
+  remoteToolsHint: '在会话中注入 remote_* 工具。默认开启；不需要时可关闭，重启 Host 后生效。',
   remoteToolsSaved: 'Remote Tools 设置已保存。',
   terminalRemote: '远程终端',
   terminalRemoteHint: '允许受信任的 Remote 设备以此 Host 用户身份运行交互式 Shell。默认开启，独立于 Agent 审批；切换后立即保存并生效。',

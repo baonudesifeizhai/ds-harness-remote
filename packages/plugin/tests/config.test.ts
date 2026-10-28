@@ -8,12 +8,18 @@ describe('plugin config', () => {
       role: 'host',
       hostControl: { enabled: true },
       terminal: { enabled: true },
+      remoteTools: { enabled: true },
       forceRelay: false,
       reconnect: { enabled: true, initialDelayMs: 1_000, maxDelayMs: 30_000, jitter: 0.2 },
       codex: { enabled: true, binary: 'codex' },
       cursor: { enabled: false, binary: 'agent' },
     })
     expect(resolveConfig({}, { DSH_REMOTE_TERMINAL_ENABLED: 'false' }).terminal.enabled).toBe(false)
+  })
+
+  it('keeps Remote Tools enabled by default while allowing an explicit opt-out', () => {
+    expect(resolveConfig({}, {}).remoteTools?.enabled).toBe(true)
+    expect(resolveConfig({ remoteTools: { enabled: false } }, {}).remoteTools?.enabled).toBe(false)
   })
 
   it('allows the default-on Codex domain to be disabled and rejects obsolete workspace filters', () => {

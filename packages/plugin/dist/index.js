@@ -75446,7 +75446,7 @@ function resolveConfig(input3 = {}, env = process.env) {
     deviceName: parsed.deviceName ?? env.DSH_REMOTE_DEVICE_NAME ?? hostname(),
     hostControl: { enabled: parsed.hostControl?.enabled ?? true },
     terminal: { enabled: parsed.terminal?.enabled ?? (env.DSH_REMOTE_TERMINAL_ENABLED === void 0 || env.DSH_REMOTE_TERMINAL_ENABLED === "true") },
-    remoteTools: { enabled: parsed.remoteTools?.enabled ?? false },
+    remoteTools: { enabled: parsed.remoteTools?.enabled ?? true },
     loopback: { ports: [...new Set(parsed.loopback?.ports ?? [])] },
     forceRelay: parsed.forceRelay ?? false,
     rotatePinnedPeerKey: parsed.rotatePinnedPeerKey ?? false,
@@ -86322,7 +86322,7 @@ var PluginControlRuntime = class {
     const next = resolveConfig({
       ...current,
       terminal: { enabled: value.terminalEnabled === void 0 ? current.terminal?.enabled ?? true : value.terminalEnabled },
-      remoteTools: { enabled: value.remoteToolsEnabled === void 0 ? current.remoteTools?.enabled ?? false : value.remoteToolsEnabled },
+      remoteTools: { enabled: value.remoteToolsEnabled === void 0 ? current.remoteTools?.enabled ?? true : value.remoteToolsEnabled },
       loopback: { ports: value.ports === void 0 ? current.loopback?.ports ?? [] : value.ports }
     });
     await this.settings.replace(editableConfig(next));

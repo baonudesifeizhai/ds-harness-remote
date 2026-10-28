@@ -21,7 +21,7 @@ export function createRemotePluginOptions(React: ClientReact) {
     const [open, setOpen] = React.useState(props.view === 'page')
     const [serverUrl, setServerUrl] = React.useState('')
     const [remoteToolsBusy, setRemoteToolsBusy] = React.useState(false)
-    const [remoteToolsEnabled, setRemoteToolsEnabled] = React.useState(false)
+    const [remoteToolsEnabled, setRemoteToolsEnabled] = React.useState(true)
     const role = 'host' as const
     const [registrationCode, setRegistrationCode] = React.useState('')
     const [associations, setAssociations] = React.useState<Partial<Record<'host' | 'client', PluginAssociation>>>({})
@@ -59,7 +59,7 @@ export function createRemotePluginOptions(React: ClientReact) {
       setSettingsView(view)
       setServerUrl(view.config.serverUrl ?? 'https://dsh.r2049.cn')
       setTerminalEnabled(view.config.terminal?.enabled ?? true)
-      setRemoteToolsEnabled(view.config.remoteTools?.enabled ?? false)
+      setRemoteToolsEnabled(view.config.remoteTools?.enabled ?? true)
       setAcpBackends((view.config.acp?.backends ?? []).map(item => ({ id: item.id, enabled: item.enabled !== false })))
       setAcpAvailability(view.acpAvailability ?? {})
       if (updateAssociations) applyAssociations(view)

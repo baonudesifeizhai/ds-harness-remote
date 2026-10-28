@@ -6,7 +6,7 @@ Android build 67.
 
 - Add Android plugin management with Remote-adapted, installed, and experimental plugin groups, official settings editing, enable/disable controls, and desktop installation guidance.
 - Refresh the Android sign-in setup with a modern branded layout, localized OAuth guidance, and more reliable callback loading and error handling.
-- Add optional Remote tools injection settings and hide Host mentions when Remote tools are disabled.
+- Enable Remote tools injection by default, with a setting to disable it, and hide Host mentions when Remote tools are disabled.
 - Preserve native Remote settings navigation and compatibility with Hosts that omit optional control-route capabilities.
 - Add Remote Host mentions with a reference popup that opens the selected Host or workspace from the native UI.
 - Keep Remote settings on the native settings launcher across supported Harness versions and route the detailed settings entry through the plugin manager when required.
@@ -19,7 +19,7 @@ Thanks @dreamfarer-space for the Android plugin management and login setup redes
 
 - 新增 Android 插件管理：支持 Remote 适配、已安装和实验性插件分组，提供官方设置编辑、启用/停用控制及电脑端安装指引。
 - 更新 Android 登录设置页，采用新的品牌布局，补齐本地化 OAuth 引导，并改进回调加载与错误处理。
-- 新增可选的 Remote 工具注入设置，并在关闭 Remote 工具时隐藏主机提及入口。
+- Remote 工具注入默认开启，支持在设置中关闭；关闭时隐藏主机提及入口。
 - 保留原生 Remote 设置导航，并兼容缺少可选 control-route 能力的 Host。
 - 新增 Remote 主机提及和引用弹窗，可从原生界面直接打开对应主机或工作区。
 - 在支持的 Harness 版本中保持 Remote 设置使用原生设置入口，并在需要时通过插件管理器打开详细设置。
